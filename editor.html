@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Markdown Editor</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="md.css">
+<style>
+  header input[type="text"] { width: 240px; padding: 4px 8px; font-size: 13px; border: 1px solid #d0d7de; border-radius: 6px; }
+  #status { color: #57606a; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #wrap { display: flex; height: calc(100vh - 49px); }
+  #edit { flex: 1; min-width: 0; padding: 16px; font-family: Consolas, "Courier New", monospace; font-size: 13px; line-height: 1.6; border: 0; border-right: 1px solid #d0d7de; resize: none; box-sizing: border-box; }
+  #edit:focus { outline: none; }
+  #preview { flex: 1; min-width: 0; padding: 24px 32px 64px; background: #fff; overflow-y: auto; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<header>
+  <span class="title">Markdown Editor</span>
+  <input type="text" id="fileNameInput" title="サーバー上のファイル名 (.md/.markdown/.txt)" placeholder="index.txt">
+  <span id="status"></span>
+  <span class="grow"></span>
+  <button id="openServerBtn">開く</button>
+  <button id="reloadBtn">再読み込み</button>
+  <button id="openBtn">MDファイルを開く</button>
+  <input type="file" id="fileInput" accept=".md,.markdown,.txt,text/markdown,text/plain" hidden>
+  <button id="saveBtn">保存</button>
+</header>
+<div id="wrap">
+  <textarea id="edit" spellcheck="false"></textarea>
+  <div id="preview"></div>
+</div>
+<script src="md.js"></script>
+<script>
+"use strict";
+// --- 編集 / プレビュー ---
+var edit = document.getElementById("edit");
+var preview = document.getElementById("preview");
+var fileNameInput = document.getElementById("fileNameInput");
+var statusEl = document.getElementById("status");
+var serverName = null; // サーバー保存の対象 (ローカルファイルを開いた時は null)
+
+function setStatus(t) { statusEl.textContent = t; }
+function updatePreview() { preview.innerHTML = render(edit.value); }
+edit.addEventListener("input", updatePreview);
+
+function loadServer(name) {
+  serverName = name;
+  fileNameInput.value = name;
+  fetch(name)
+    .then(function (r) {
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      return r.arrayBuffer();
+    })
+    .then(function (b) {
+      edit.value = decode(b);
+      updatePreview();
+      setStatus(name + " を読み込みました");
+    })
+    .catch(function () {
+      edit.value = "";
+      updatePreview();
+      setStatus(name + " は読み込めません。新規作成として編集・保存できます");
+    });
+}
+
+function openLocal(f) {
+  var r = new FileReader();
+  r.onload = function () {
+    edit.value = decode(r.result);
+    updatePreview();
+    serverName = null;
+    fileNameInput.value = f.name;
+    setStatus("ローカルファイルを開きました (保存はダウンロードになります)");
+  };
+  r.readAsArrayBuffer(f);
+}
+
+function save() {
+  if (!serverName) {
+    var blob = new Blob([edit.value], { type: "text/markdown;charset=utf-8" });
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = fileNameInput.value || "document.md";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setStatus("ダウンロードしました");
+    return;
+  }
+  setStatus("保存中...");
+  fetch("save_md.py", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: serverName, content: edit.value })
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      setStatus(j && j.ok ? serverName + " に保存しました" : "保存に失敗しました: " + ((j && j.error) || "不明なエラー"));
+    })
+    .catch(function () {
+      setStatus("保存に失敗しました (save_md.py が実行できる環境か確認してください)");
+    });
+}
+
+document.getElementById("openServerBtn").addEventListener("click", function () {
+  var name = fileNameInput.value.trim();
+  if (name) loadServer(name);
+});
+document.getElementById("reloadBtn").addEventListener("click", function () {
+  if (serverName) loadServer(serverName);
+  else setStatus("サーバーのファイルが開かれていません");
+});
+document.getElementById("openBtn").addEventListener("click", function () {
+  document.getElementById("fileInput").click();
+});
+document.getElementById("fileInput").addEventListener("change", function (e) {
+  var f = e.target.files[0];
+  if (f) openLocal(f);
+});
+document.getElementById("saveBtn").addEventListener("click", save);
+
+loadServer(MD_FILE);
+</script>
+</body>
+</html>
