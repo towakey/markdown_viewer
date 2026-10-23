@@ -14,21 +14,88 @@ function colorOf(mark) {
   return /^([0-9A-Fa-f]{3}|[0-9A-Fa-f]{4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(mark) ? "#" + mark : mark;
 }
 
+// フォルダパス判定 (\\サーバー\共有\dir または Y:\dir)
+function isFolderPath(u) { return /^\\\\/.test(u) || /^[A-Za-z]:[\\\/]/.test(u); }
+
+// \\srv\dir -> file://srv/dir,  Y:\dir -> file:///Y:/dir
+function fileUrl(u) {
+  return /^\\\\/.test(u) ? "file:" + u.replace(/\\/g, "/") : "file:///" + u.replace(/\\/g, "/");
+}
+
+// パス/URLをクリップボードにコピー (http配信ではclipboard APIが使えないのでfallbackあり)
+function copyText(t) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(t);
+  } else {
+    var ta = document.createElement("textarea");
+    ta.value = t;
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    ta.remove();
+  }
+}
+
+function copyPath(el) { copyText(el.getAttribute("data-path") || ""); }
+
+// リンク横のコピーボタン
+function copyBtn(btn) {
+  copyText(btn.getAttribute("data-path") || "");
+  btn.textContent = "コピー済";
+  setTimeout(function () { btn.textContent = "コピー"; }, 1500);
+}
+
 function inline(s) {
+  // リンク・コード等を先に生成してプレースホルダ退避し、装飾(* _ ~~)がURLやコード内で誤爆しないようにする
+  var stash = [];
+  function keep(html) { stash.push(html); return "\u0000" + (stash.length - 1) + "\u0000"; }
+  function stripAngle(u) { return u.charAt(0) === "<" ? u.slice(1, -1) : u; }
+  function copyBtnTag(rawPath) {
+    return '<button type="button" class="cpbtn" data-path="' + rawPath.replace(/"/g, "&quot;") +
+           '" onclick="copyBtn(this)">コピー</button>';
+  }
+  function linkTag(text, url) {
+    var raw = url;
+    url = url.replace(/"/g, "%22");
+    if (isFolderPath(url)) {
+      return keep('<a href="' + fileUrl(url) + '" data-path="' + raw.replace(/"/g, "&quot;") +
+                '" title="クリックでパスをコピー" onclick="copyPath(this)">' + text + '</a>' + copyBtnTag(raw));
+    }
+    return keep('<a href="' + url + '">' + text + '</a>' + copyBtnTag(raw));
+  }
+
   s = esc(s);
   s = s.replace(/\{([#A-Za-z0-9]+)\}([\s\S]*?)\{\/\1\}/g, function (_, c, t) {
-    return '<span style="background-color:' + colorOf(c) + '">' + t + '</span>';
+    return keep('<span style="background-color:' + colorOf(c) + '">' + t + '</span>');
   });
-  s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
-  s = s.replace(/!\[([^\]]*)\]\(([^)\s]+)[^)]*\)/g, '<img alt="$1" src="$2">');
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)[^)]*\)/g, '<a href="$2">$1</a>');
+  s = s.replace(/`([^`]+)`/g, function (_, c) { return keep("<code>" + c + "</code>"); });
+
+  // [text](url) / ![alt](src) : URLは ()・※・全角空白を含んでもよい (<>囲みも可)
+  var urlRe = "(<[^>]*>|(?:\\\\.|[^()\\u0000-\\u0020]|\\([^()\\u0000-\\u0020]*\\))+)";
+  s = s.replace(new RegExp("!\\[([^\\]]*)\\]\\(" + urlRe + "[^)]*\\)", "g"), function (_, alt, url) {
+    return keep('<img alt="' + alt + '" src="' + stripAngle(url).replace(/"/g, "%22") + '">');
+  });
+  s = s.replace(new RegExp("\\[([^\\]]+)\\]\\(" + urlRe + "[^)]*\\)", "g"), function (_, t, url) {
+    return linkTag(t, stripAngle(url));
+  });
+  // http(s) URLの自動リンク
+  s = s.replace(/(https?:\/\/[^\s<>"'()]+(?:\([^()\s]*\)[^\s<>"'()]*)*)/g, function (_, u) {
+    var t = u.replace(/[.,;:!?、。]+$/, "");
+    return keep('<a href="' + t + '">' + t + '</a>' + copyBtnTag(t)) + u.slice(t.length);
+  });
+  // フォルダパスの自動リンク (行末・半角空白まで。フォルダ名中の全角空白・()・※も含む。末尾の句読点はリンクから外す)
+  s = s.replace(/(\\\\[^\u0000-\u0020<>"']+|(?<![A-Za-z0-9_])[A-Za-z]:[\\\/][^\u0000-\u0020<>"']+)/g, function (_, p) {
+    var t = p.replace(/[.,;:!?、。]+$/, "");
+    return linkTag(t, t) + p.slice(t.length);
+  });
+
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/__([^_]+)__/g, "<strong>$1</strong>");
   s = s.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
   s = s.replace(/(^|[^A-Za-z0-9_])_([^_\n]+)_(?![A-Za-z0-9_])/g, "$1<em>$2</em>");
   s = s.replace(/~~([^~]+)~~/g, "<del>$1</del>");
-  s = s.replace(/(https?:\/\/[^\s<>"'()]+[^\s<>"'().,;:!?])/g, '<a href="$1">$1</a>');
-  return s;
+
+  return s.replace(/\u0000(\d+)\u0000/g, function (_, n) { return stash[+n]; });
 }
 
 function render(src) {
