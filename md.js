@@ -70,12 +70,14 @@ function inline(s) {
   });
   s = s.replace(/`([^`]+)`/g, function (_, c) { return keep("<code>" + c + "</code>"); });
 
-  // [text](url) / ![alt](src) : URLは ()・※・全角空白を含んでもよい (<>囲みも可)
-  var urlRe = "(<[^>]*>|(?:\\\\.|[^()\\u0000-\\u0020]|\\([^()\\u0000-\\u0020]*\\))+)";
-  s = s.replace(new RegExp("!\\[([^\\]]*)\\]\\(" + urlRe + "[^)]*\\)", "g"), function (_, alt, url) {
+  // [text](url) / ![alt](src) : URLは ()・※・全角空白を含んでもよい (<>囲みも可)。
+  // 閉じていない ) も、直後が空白・句読点でなければURLの一部とみなす (フォルダ名に)を含むため)
+  var urlRe = "(<[^>]*>|(?:\\\\.|\\([^()\\u0000-\\u0020]*\\)|\\)(?=[^\\u0000-\\u0020\\u3000()\\[\\]{},.;:!?、。，．！？；：'\"”’）])|[^()\\u0000-\\u0020])+)";
+  var urlTail = "(\\s+\"[^\"]*\")?\\s*\\)";
+  s = s.replace(new RegExp("!\\[([^\\]]*)\\]\\(" + urlRe + urlTail, "g"), function (_, alt, url) {
     return keep('<img alt="' + alt + '" src="' + stripAngle(url).replace(/"/g, "%22") + '">');
   });
-  s = s.replace(new RegExp("\\[([^\\]]+)\\]\\(" + urlRe + "[^)]*\\)", "g"), function (_, t, url) {
+  s = s.replace(new RegExp("\\[([^\\]]+)\\]\\(" + urlRe + urlTail, "g"), function (_, t, url) {
     return linkTag(t, stripAngle(url));
   });
   // http(s) URLの自動リンク
